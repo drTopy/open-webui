@@ -8,7 +8,7 @@ services:
     image: ghcr.io/open-webui/open-webui:${WEBUI_DOCKER_TAG-main}
     container_name: open-webui
     volumes:
-      - open-webui:/app/backend/data
+      - ./data:/app/backend/data
     
     ports:
       - 3039:8080
@@ -20,5 +20,15 @@ services:
     restart: unless-stopped
 
 volumes:
-  ollama: {}
-  open-webui: {}
+  ollama:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./ollama_data
+  open-webui:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./open_webui_data
