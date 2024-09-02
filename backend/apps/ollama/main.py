@@ -41,6 +41,7 @@ from config import (
     MODEL_FILTER_LIST,
     UPLOAD_DIR,
     AppConfig,
+    CORS_ALLOW_ORIGIN,
 )
 from utils.misc import (
     calculate_sha256,
@@ -55,7 +56,7 @@ log.setLevel(SRC_LOG_LEVELS["OLLAMA"])
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGIN,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -147,20 +148,29 @@ async def cleanup_response(
         await session.close()
 
 
-async def post_streaming_url(url: str, payload: str, stream: bool = True):
+async def post_streaming_url(
+    url: str, payload: Union[str, bytes], stream: bool = True, content_type=None
+):
     r = None
     try:
         session = aiohttp.ClientSession(
             trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
         )
-        r = await session.post(url, data=payload)
+        r = await session.post(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
 
         if stream:
+            headers = dict(r.headers)
+            if content_type:
+                headers["Content-Type"] = content_type
             return StreamingResponse(
                 r.content,
                 status_code=r.status,
-                headers=dict(r.headers),
+                headers=headers,
                 background=BackgroundTask(
                     cleanup_response, response=r, session=session
                 ),
@@ -422,6 +432,7 @@ async def copy_model(
     r = requests.request(
         method="POST",
         url=f"{url}/api/copy",
+        headers={"Content-Type": "application/json"},
         data=form_data.model_dump_json(exclude_none=True).encode(),
     )
 
@@ -470,6 +481,7 @@ async def delete_model(
     r = requests.request(
         method="DELETE",
         url=f"{url}/api/delete",
+        headers={"Content-Type": "application/json"},
         data=form_data.model_dump_json(exclude_none=True).encode(),
     )
     try:
@@ -510,6 +522,7 @@ async def show_model_info(form_data: ModelNameForm, user=Depends(get_verified_us
     r = requests.request(
         method="POST",
         url=f"{url}/api/show",
+        headers={"Content-Type": "application/json"},
         data=form_data.model_dump_json(exclude_none=True).encode(),
     )
     try:
@@ -567,6 +580,7 @@ async def generate_embeddings(
     r = requests.request(
         method="POST",
         url=f"{url}/api/embeddings",
+        headers={"Content-Type": "application/json"},
         data=form_data.model_dump_json(exclude_none=True).encode(),
     )
     try:
@@ -616,6 +630,7 @@ def generate_ollama_embeddings(
     r = requests.request(
         method="POST",
         url=f"{url}/api/embeddings",
+        headers={"Content-Type": "application/json"},
         data=form_data.model_dump_json(exclude_none=True).encode(),
     )
     try:
@@ -721,15 +736,20 @@ async def generate_chat_completion(
     url_idx: Optional[int] = None,
     user=Depends(get_verified_user),
 ):
-    log.debug(f"{form_data.model_dump_json(exclude_none=True).encode()}=")
-
-    payload = {
-        **form_data.model_dump(exclude_none=True, exclude=["metadata"]),
-    }
+    payload = {**form_data.model_dump(exclude_none=True)}
+    log.debug(f"{payload = }")
     if "metadata" in payload:
         del payload["metadata"]
 
     model_id = form_data.model
+
+    if app.state.config.ENABLE_MODEL_FILTER:
+        if user.role == "user" and model_id not in app.state.config.MODEL_FILTER_LIST:
+            raise HTTPException(
+                status_code=403,
+                detail="Model not found",
+            )
+
     model_info = Models.get_model_by_id(model_id)
 
     if model_info:
@@ -754,7 +774,9 @@ async def generate_chat_completion(
     log.info(f"url: {url}")
     log.debug(payload)
 
-    return await post_streaming_url(f"{url}/api/chat", json.dumps(payload))
+    return await post_streaming_url(
+        f"{url}/api/chat", json.dumps(payload), content_type="application/x-ndjson"
+    )
 
 
 # TODO: we should update this part once Ollama supports other types
@@ -790,6 +812,14 @@ async def generate_openai_chat_completion(
         del payload["metadata"]
 
     model_id = completion_form.model
+
+    if app.state.config.ENABLE_MODEL_FILTER:
+        if user.role == "user" and model_id not in app.state.config.MODEL_FILTER_LIST:
+            raise HTTPException(
+                status_code=403,
+                detail="Model not found",
+            )
+
     model_info = Models.get_model_by_id(model_id)
 
     if model_info:

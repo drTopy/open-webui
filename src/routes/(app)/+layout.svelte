@@ -32,7 +32,8 @@
 		config,
 		showCallOverlay,
 		tools,
-		functions
+		functions,
+		temporaryChatEnabled
 	} from '$lib/stores';
 
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
@@ -40,6 +41,7 @@
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import { getFunctions } from '$lib/apis/functions';
+	import { page } from '$app/stores';
 
 	const i18n = getContext('i18n');
 
@@ -79,9 +81,17 @@
 			});
 
 			if (userSettings) {
-				await settings.set(userSettings.ui);
+				settings.set(userSettings.ui);
 			} else {
-				await settings.set(JSON.parse(localStorage.getItem('settings') ?? '{}'));
+				let localStorageSettings = {} as Parameters<(typeof settings)['set']>[0];
+
+				try {
+					localStorageSettings = JSON.parse(localStorage.getItem('settings') ?? '{}');
+				} catch (e: unknown) {
+					console.error('Failed to parse settings from localStorage', e);
+				}
+
+				settings.set(localStorageSettings);
 			}
 
 			await Promise.all([
@@ -177,10 +187,13 @@
 				showChangelog.set(localStorage.version !== $config.version);
 			}
 
+			if ($page.url.searchParams.get('temporary-chat') === 'true') {
+				temporaryChatEnabled.set(true);
+			}
+
 			await tick();
 		}
 
-		await mermaid.initialize({ startOnLoad: false });
 		loaded = true;
 	});
 </script>
